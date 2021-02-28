@@ -2,9 +2,14 @@
 name = "wspty"
 version = "0.1.0"
 authors = ["Jason NI (nixin) <jason.ni.py@gmail.com>"]
+description = "xterm.js example with Rust Tokio and pty backend server"
+homepage = "https://github.com/jason-ni/wspty/tree/master/"
+repository = "https://github.com/jason-ni/wspty"
+readme = "README.md"
+categories = ["asynchronous", "os::unix-apis"]
+license = "MIT"
 edition = "2018"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 anyhow = "1.0"
