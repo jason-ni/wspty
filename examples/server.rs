@@ -42,17 +42,11 @@ async fn handle_websocket_incoming(
             Message::Binary(data) => match data[0] {
                 0 => {
                     if data.len().gt(&0) {
-                        println!(
-                            "=== data: {}",
-                            pretty_hex::pretty_hex(&data.as_slice()[1..].to_vec())
-                        );
                         pty_shell_writer.write_all(&data[1..]).await?;
                     }
                 }
                 1 => {
-                    println!("=== {}", pretty_hex::pretty_hex(&data.as_slice()));
                     let resize_msg: WindowSize = serde_json::from_slice(&data[1..])?;
-                    println!("==  resize msg: {:?}", resize_msg);
                     pty_shell_writer.resize(resize_msg.cols, resize_msg.rows)?;
                 }
                 2 => {
@@ -81,7 +75,6 @@ async fn handle_pty_incoming(
             buffer.resize(1024, 0u8);
             let mut tail = &mut buffer[1..];
             let n = pty_shell_reader.read_buf(&mut tail).await?;
-            log::debug!("== read pty buf size: {}", n);
             if n == 0 {
                 break;
             }

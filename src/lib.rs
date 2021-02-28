@@ -71,7 +71,6 @@ impl PtyMaster {
         }
 
         let ptsname = OsStr::from_bytes(unsafe { CStr::from_ptr(&buf as _) }.to_bytes());
-        log::debug!("using pts: {}", ptsname.to_str().unwrap());
         match std::fs::OpenOptions::new()
             .read(true)
             .write(true)
@@ -116,7 +115,6 @@ impl AsyncRead for PtyMaster {
         cx: &mut Context<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<Result<(), std::io::Error>> {
-        log::debug!("==== begin poll_read");
         let b =
             unsafe { &mut *(buf.unfilled_mut() as *mut [std::mem::MaybeUninit<u8>] as *mut [u8]) };
         loop {
@@ -133,13 +131,10 @@ impl AsyncRead for PtyMaster {
             match f.get_ref().read(b) {
                 Ok(s) => {
                     if s.gt(&0) {
-                        log::debug!("=== read size {}", s);
                         unsafe {
                             buf.assume_init(s);
                             buf.advance(s);
                         }
-                    } else {
-                        log::debug!("=== read size zero");
                     }
                     return Poll::Ready(Ok(()));
                 }
@@ -147,8 +142,7 @@ impl AsyncRead for PtyMaster {
                     std::io::ErrorKind::WouldBlock => {
                         g.clear_ready();
                     }
-                    k => {
-                        log::debug!("=== read error: {:?}", k);
+                    _ => {
                         return Poll::Ready(Err(e));
                     }
                 },
@@ -261,11 +255,8 @@ impl PtyCommand {
         let mut child = self.inner.spawn()?;
         let mut master_cl = pty_master.clone();
         let fut = async move {
-            log::debug!("wating...");
             let _ = tokio::select! {
-                exit_st = (&mut child).wait() => {
-                    log::debug!("exited {:?}", exit_st);
-                },
+                _exit_st = (&mut child).wait() => (),
                 _ = stopper.recv() => {
                     let _ = (&mut child).start_kill().map_err(|e| {
                         log::error!("failed to kill pty child: {:?}", e);
