@@ -1,11 +1,8 @@
 use std::collections::HashMap;
-use std::io::Write;
-use std::os::unix::prelude::AsRawFd;
-use std::sync::Arc;
-use tokio::io::{split, ReadHalf, WriteHalf};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command;
-use wspty::{PtyCommand, PtyMaster};
+use tokio::sync::mpsc;
+use wspty::PtyCommand;
 
 async fn run() -> Result<(), anyhow::Error> {
     let mut cmd = Command::new("su");
@@ -17,7 +14,8 @@ async fn run() -> Result<(), anyhow::Error> {
     cmd.envs(&envs).args(&["-", "jason"]);
 
     let mut pty_cmd = PtyCommand::from(cmd);
-    let mut pty_master = pty_cmd.run().await?;
+    let (_stop_sender, stop_receiver) = mpsc::unbounded_channel();
+    let mut pty_master = pty_cmd.run(stop_receiver).await?;
     pty_master.resize(108, 38)?;
     let mut rh = pty_master.clone();
     let mut wh = pty_master.clone();
@@ -49,5 +47,5 @@ fn main() {
         .enable_all()
         .build()
         .unwrap();
-    rt.block_on(run());
+    let _ = rt.block_on(run());
 }

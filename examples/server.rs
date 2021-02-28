@@ -1,11 +1,12 @@
 extern crate env_logger;
 extern crate futures;
 extern crate tokio;
-use bytes::{BufMut, BytesMut};
+use bytes::BytesMut;
 use futures::SinkExt;
 use futures::StreamExt;
 use futures_util::stream::{SplitSink, SplitStream};
 use log::{debug, error};
+use serde_derive::Deserialize;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -19,20 +20,26 @@ use wspty::{PtyCommand, PtyMaster};
 #[tokio::main]
 async fn main() {
     env_logger::init();
-    ws_server()
+    let _ = ws_server()
         .await
         .map_err(|e| debug!("ws server exit with error: {:?}", e));
+}
+
+#[derive(Deserialize, Debug)]
+struct WindowSize {
+    cols: u16,
+    rows: u16,
 }
 
 async fn handle_websocket_incoming(
     mut incoming: SplitStream<WebSocketStream<TcpStream>>,
     mut pty_shell_writer: PtyMaster,
     websocket_sender: UnboundedSender<Message>,
+    stop_sender: UnboundedSender<()>,
 ) -> Result<(), anyhow::Error> {
-    let (stop_sender, stop_receiver) = unbounded_channel();
     while let Some(Ok(msg)) = incoming.next().await {
         match msg {
-            Message::Binary(mut data) => match data[0] {
+            Message::Binary(data) => match data[0] {
                 0 => {
                     if data.len().gt(&0) {
                         println!(
@@ -42,14 +49,22 @@ async fn handle_websocket_incoming(
                         pty_shell_writer.write_all(&data[1..]).await?;
                     }
                 }
-                1 => println!("=== {}", pretty_hex::pretty_hex(&data.as_slice())),
+                1 => {
+                    println!("=== {}", pretty_hex::pretty_hex(&data.as_slice()));
+                    let resize_msg: WindowSize = serde_json::from_slice(&data[1..])?;
+                    println!("==  resize msg: {:?}", resize_msg);
+                    pty_shell_writer.resize(resize_msg.cols, resize_msg.rows)?;
+                }
+                2 => {
+                    websocket_sender.send(Message::Binary(vec![1u8]))?;
+                }
                 _ => (),
             },
             Message::Ping(data) => websocket_sender.send(Message::Pong(data))?,
             _ => (),
         };
     }
-    stop_sender
+    let _ = stop_sender
         .send(())
         .map_err(|e| debug!("failed to send stop signal: {:?}", e));
     Ok(())
@@ -107,13 +122,14 @@ async fn handle_connection(stream: TcpStream) -> Result<(), anyhow::Error> {
     );
     cmd.envs(&envs).args(&["-", "jason"]);
     let mut pty_cmd = PtyCommand::from(cmd);
-    let mut pty_master = pty_cmd.run().await?;
+    let (stop_sender, stop_receiver) = unbounded_channel();
+    let pty_master = pty_cmd.run(stop_receiver).await?;
 
     let pty_shell_writer = pty_master.clone();
     let pty_shell_reader = pty_master.clone();
 
     let res = tokio::select! {
-        res = handle_websocket_incoming(ws_incoming, pty_shell_writer, sender) => res,
+        res = handle_websocket_incoming(ws_incoming, pty_shell_writer, sender, stop_sender) => res,
         res = handle_pty_incoming(pty_shell_reader, ws_sender) => res,
         res = write_to_websocket(ws_outgoing, receiver) => res,
     };
@@ -124,8 +140,9 @@ async fn handle_connection(stream: TcpStream) -> Result<(), anyhow::Error> {
 async fn ws_server() -> Result<(), anyhow::Error> {
     let addr: SocketAddr = "127.0.0.1:7703".parse().unwrap();
     match TcpListener::bind(addr).await {
-        Ok(mut listener) => {
+        Ok(listener) => {
             while let Ok((stream, peer)) = listener.accept().await {
+                log::debug!("handling request from {:?}", peer);
                 let fut = async move {
                     let _ = handle_connection(stream)
                         .await

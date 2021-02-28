@@ -9,6 +9,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use tokio::io::unix::AsyncFd;
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, Error, ReadBuf};
+use tokio::sync::mpsc;
 
 pub struct PtyMaster {
     inner: Arc<AsyncFd<File>>,
@@ -228,11 +229,13 @@ impl From<Command> for PtyCommand {
 }
 
 impl PtyCommand {
-    pub async fn run(&mut self) -> Result<PtyMaster, std::io::Error> {
+    pub async fn run(
+        &mut self,
+        mut stopper: mpsc::UnboundedReceiver<()>,
+    ) -> Result<PtyMaster, std::io::Error> {
         let mut pty_master = PtyMaster::new().unwrap();
         let master_fd = pty_master.as_raw_fd();
         let slave = pty_master.open_sync_pty_slave().unwrap();
-        let slave_fd = slave.as_raw_fd();
         self.inner
             .stdin(slave.try_clone().unwrap())
             .stdout(slave.try_clone().unwrap())
@@ -240,20 +243,6 @@ impl PtyCommand {
 
         unsafe {
             self.inner.pre_exec(move || {
-                /*
-                let mut attrs: libc::termios = std::mem::zeroed();
-
-                if libc::tcgetattr(slave_fd, &mut attrs as _) != 0 {
-                    return Err(std::io::Error::last_os_error());
-                }
-
-                libc::cfmakeraw(&mut attrs as _);
-
-                if libc::tcsetattr(slave_fd, libc::TCSANOW, &attrs as _) != 0 {
-                    return Err(std::io::Error::last_os_error());
-                }
-                 */
-
                 if libc::close(master_fd) != 0 {
                     return Err(std::io::Error::last_os_error());
                 }
@@ -273,8 +262,19 @@ impl PtyCommand {
         let mut master_cl = pty_master.clone();
         let fut = async move {
             log::debug!("wating...");
-            let exit_st = child.wait().await?;
-            log::debug!("exited {:?}", exit_st);
+            let _ = tokio::select! {
+                exit_st = (&mut child).wait() => {
+                    log::debug!("exited {:?}", exit_st);
+                },
+                _ = stopper.recv() => {
+                    let _ = (&mut child).start_kill().map_err(|e| {
+                        log::error!("failed to kill pty child: {:?}", e);
+                    });
+                    let _ = (&mut child).wait().await.map_err(|e| {
+                        log::error!("kill wait pty child error: {:?}", e);
+                    });
+                },
+            };
             tokio::time::sleep(std::time::Duration::from_secs(1)).await;
             master_cl.shutdown().await?;
             Ok::<(), anyhow::Error>(())
