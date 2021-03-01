@@ -70,9 +70,9 @@ async fn handle_pty_incoming(
 ) -> Result<(), anyhow::Error> {
     let fut = async move {
         let mut buffer = BytesMut::with_capacity(1024);
+        buffer.resize(1024, 0u8);
         loop {
-            buffer.extend_from_slice(&0u8.to_be_bytes());
-            buffer.resize(1024, 0u8);
+            buffer[0] = 0u8;
             let mut tail = &mut buffer[1..];
             let n = pty_shell_reader.read_buf(&mut tail).await?;
             if n == 0 {
