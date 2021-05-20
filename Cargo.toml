@@ -1,6 +1,6 @@
 [package]
 name = "wspty"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["Jason NI (nixin) <jason.ni.py@gmail.com>"]
 description = "xterm.js example with Rust Tokio and pty backend server"
 homepage = "https://github.com/jason-ni/wspty/tree/master/"
@@ -25,5 +25,7 @@ serde = "1.0"
 serde_derive = "1.0"
 serde_json = "1.0"
 tokio = { version = "1", features = ["full"]}
+
+[dev-dependencies]
 tokio-tungstenite = "0.13.0"
 tungstenite = "0.12.0"
